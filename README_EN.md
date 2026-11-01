@@ -13,10 +13,11 @@ A self-hosted music library built with Flask + vanilla HTML/JS — zero build ch
 - 🖼️ **Automatic covers**: extracted from embedded audio tags (ID3 / FLAC / MP4)
 - 📤 **Standalone upload page**: drag-and-drop batch upload of audio and .lrc lyrics
 
-**Lyrics toolkit**
-- 🎙️ **Speech recognition**: calls the Bcut (bi-jian) ASR endpoint to transcribe timestamped lyrics straight from the audio
-- 🌐 **Web lookup + AI proofreading**: searches lyrics.net.cn, then uses an AI model (any OpenAI-compatible endpoint) to align the found lyrics to the recognized timestamps line by line, fixing recognition errors while preserving original metadata lines (songwriter, composer, etc.)
-- 📝 **Manual lyrics page**: paste LRC text or upload a .lrc file for songs the automatic pipeline can't handle
+**Lyric Studio (one entry point for everything)**
+- ✨ **Auto-fill**: looks up the real lyrics on lyrics.net.cn, transcribes a timeline with the Bcut (bi-jian) ASR endpoint, then lets an AI model (any OpenAI-compatible endpoint) align line by line and fix recognition errors — fully automatic when the site knows the song, with original metadata lines (songwriter, composer, etc.) preserved
+- 🎙️ **No site match? You never start from scratch**: it falls back to the ASR timeline and lists every line as "timestamp + recognized text", so you only correct the words against the audio
+- ✏️ **Line editor**: edit the time (`mm:ss.xx`) and text of each line, preview any line from its timestamp, add/delete lines, shift the whole timeline by ±0.5 s, upload a .lrc file, and save (with an automatic backup into `lrc_backup/`)
+- 🗂️ **Needs-lyrics list**: an in-app list of tracks still missing lyrics — hit "Edit" to jump straight into the studio, or run a batch over every song the site knows
 - 🧹 **Lyrics housekeeping**: auto-pairs misnamed .lrc files, cleans up orphan/duplicate lyrics (only exact-duplicate content is deleted)
 
 **NetEase Cloud Music integration** (optional)
@@ -138,7 +139,14 @@ cp ai_config.example.json ai_config.json
 # edit ai_config.json with your own base_url / api_key / model
 ```
 
-Without this file everything else works fine — manual lyrics entry and speech recognition are unaffected.
+Two optional fields:
+
+| Field | Meaning |
+| --- | --- |
+| `align_model` | Model used only for lyric alignment. The job is mechanical, so a non-reasoning model (e.g. `deepseek-chat`) finishes in seconds; **reasoning models (`deepseek-flash` / `deepseek-reasoner`) burn the whole token budget on chain-of-thought and often return an empty body at the 8k limit** — if you want one, also set `max_tokens` to `32000` |
+| `max_tokens` | Output limit per request, default 8000 |
+
+Without this file everything else works fine — manual editing in the studio and speech recognition are unaffected.
 
 ### NetEase Cloud Music
 

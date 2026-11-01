@@ -119,11 +119,6 @@ def upload_page():
     return render_template("upload.html")
 
 
-@app.get("/lyrfix")
-def lyrfix_page():
-    return render_template("lyrfix.html")
-
-
 # ==================== 音乐库 ====================
 
 @app.get("/api/songs")
@@ -238,59 +233,286 @@ def api_link_cover(sid):
     return jsonify(lib.update(sid, cover=url, cover_manual=True))
 
 
-# ==================== 歌词自动识别（必剪 ASR） ====================
-# 同一时刻只跑一个识别任务，状态存这里供前端轮询
-_asr_state = {"sid": None, "status": "idle", "msg": ""}  # idle/running/done/error
-_asr_lock = threading.Lock()
+# ==================== 歌词工坊（找词 / 识别 / AI 对齐 / 手改 一条链路） ====================
+# 原「识别」「补词」「手动补词页」三个入口合并成一处，流程：
+#   1) 网站有词 → 取时间轴（现有 .lrc 优先，没有就跑必剪 ASR）→ AI 逐行对齐纠错 → 写回
+#   2) 网站没词 → 直接识别出时间轴，前端把「时间 + 文字」逐行列出来给用户改
+#   3) 只想微调 → 读出现有 LRC 的每一行，改完保存（原有制作信息行原样保留）
+# ASR 很贵（一首 1~3 分钟），结果按「路径+大小+修改时间」缓存到 asr_cache/，
+# 同一首歌反复打开歌词工坊不会重复识别。
+ASR_CACHE_DIR = os.path.join(Config.BASE_DIR, "asr_cache")
+_asr_run_lock = threading.Lock()          # 同一时刻只跑一个识别任务
 
 
-def _asr_worker(sid: str, audio_path: str) -> None:
+def _lrc_path(rel: str) -> str:
+    """音频对应的 .lrc 路径（同名并列）。"""
+    return os.path.splitext(os.path.join(MUSIC_MOUNT, rel))[0] + ".lrc"
+
+
+def _read_lyric(rel: str) -> tuple:
+    """读出现有 .lrc -> (元数据行, [{'t','text'}])；文件不存在返回 ([], [])。"""
+    path = _lrc_path(rel)
+    if not os.path.isfile(path):
+        return [], []
     try:
-        with open(audio_path, "rb") as f:
-            binary = f.read()
-        lrc_text = asr.recognize(binary)
-        if not lrc_text.strip():
-            raise asr.AsrError("没有识别到任何内容")
-        # .lrc 与音乐并列同名存放，是歌词的唯一来源
-        with open(os.path.splitext(audio_path)[0] + ".lrc", "w", encoding="utf-8") as f:
-            f.write(lrc_text)
-        lib.update(sid, lyrics=None)     # 清掉可能存在的旧内嵌歌词
-        _asr_state.update(status="done", msg="识别完成")
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+    except OSError:
+        return [], []
+    meta, ts_lines = lyr.split_lrc(raw)
+    lines = []
+    for ts, text in ts_lines:
+        sec = lyr.parse_seconds(ts)
+        if sec is not None:
+            lines.append({"t": round(sec, 2), "text": text})
+    return meta, lines
+
+
+def _asr_cache_key(rel: str) -> str | None:
+    full = os.path.join(MUSIC_MOUNT, rel)
+    try:
+        st = os.stat(full)
+    except OSError:
+        return None
+    raw = "%s|%d|%d" % (rel, st.st_size, int(st.st_mtime))
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def _recognize(rel: str, force: bool = False) -> str:
+    """必剪 ASR -> LRC 文本（带磁盘缓存；force=True 忽略缓存重新识别）。"""
+    ext = os.path.splitext(rel)[1].lower()
+    if ext not in asr.SUPPORTED_EXTS:
+        raise asr.AsrError(f"{ext} 格式不支持在线识别（支持 mp3/flac/m4a/wav）")
+    key = _asr_cache_key(rel)
+    cache = os.path.join(ASR_CACHE_DIR, key + ".lrc") if key else None
+    if cache and not force and os.path.isfile(cache):
+        try:
+            with open(cache, "r", encoding="utf-8", errors="replace") as f:
+                cached = f.read()
+            if cached.strip():
+                return cached
+        except OSError:
+            pass
+    full = os.path.join(MUSIC_MOUNT, rel)
+    if not os.path.isfile(full):
+        raise asr.AsrError("音频文件不存在")
+    with _asr_run_lock:                    # 串行化，避免并发把优盘和接口打爆
+        with open(full, "rb") as f:
+            text = asr.recognize(f.read())
+    if not text.strip():
+        raise asr.AsrError("没有识别到任何内容")
+    if cache:
+        try:
+            os.makedirs(ASR_CACHE_DIR, exist_ok=True)
+            with open(cache, "w", encoding="utf-8") as f:
+                f.write(text)
+        except OSError:
+            pass                           # 缓存写失败不影响主流程
+    return text
+
+
+def _timeline(rel: str, lines: list, force_asr: bool = False) -> tuple:
+    """取时间轴：现有 .lrc 优先，没有（或强制）才跑 ASR。返回 (lines, 错误信息)。"""
+    if lines and not force_asr:
+        return lines, None
+    try:
+        return lyr.parse_lines(_recognize(rel, force=force_asr)) or lines, None
     except asr.AsrError as e:
-        _asr_state.update(status="error", msg=str(e))
+        return lines, str(e)
+
+
+def _site_lyric(rel: str) -> tuple:
+    """文件名拆「歌手 - 歌名」双向搜网站，返回 (候选信息, 歌词详情) 或 (None, None)。"""
+    stem = os.path.splitext(os.path.basename(rel))[0]
+    parts = [p.strip() for p in stem.split(" - ") if p.strip()]
+    pairs = [(parts[-1], parts[0]), (parts[0], parts[-1])] if len(parts) >= 2 else [(stem, "")]
+    for title, artist in pairs:
+        if not title:
+            continue
+        try:
+            cand = lyr.find_best(title, artist)
+            if not cand:
+                continue
+            info = lyr.fetch(cand["id"])
+        except lyr.LyrError:
+            continue
+        if info.get("lines"):
+            return cand, info
+    return None, None
+
+
+def _save_lyric(rel: str, meta: list, lines: list) -> str | None:
+    """写回 .lrc（写前备份），返回备份文件名。"""
+    path = _lrc_path(rel)
+    text = lyr.build_lrc(meta, lines)
+    bak = _backup_lrc(path, rel) if os.path.isfile(path) else None
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    if lib.get(rel) is not None:      # 清掉可能存在的旧内嵌歌词，避免双源不一致
+        lib.update(rel, lyrics=None)
+    return bak
+
+
+def _lyric_auto(rel: str, force_asr: bool = False, allow_asr: bool = True) -> dict:
+    """自动链路：网站找词 + 时间轴 + AI 对齐，成功即写回。
+
+    返回 {status, note, meta, lines, source?, saved?, backup?}
+    status:
+      aligned     已对齐并保存
+      no_site     网站没词（已附识别时间轴，供手动修改）
+      ai_error    AI 失败（已附时间轴，供手动修改）
+      no_timeline 既没词也没识别出时间轴
+    """
+    meta, lines = _read_lyric(rel)
+    cand, info = _site_lyric(rel)
+    if cand is None:
+        if allow_asr:
+            lines, err = _timeline(rel, lines, force_asr)
+        else:
+            err = None
+        note = "网站上没找到这首歌的歌词"
+        if err:
+            note += f"（识别时间轴也失败：{err}）"
+        elif lines:
+            note += "，下面是识别出的时间轴，请对照音频改文字后保存"
+        else:
+            note += "，也没有可用时间轴；可粘贴带时间戳的歌词或上传 .lrc"
+        return {"status": "no_site", "meta": meta, "lines": lines, "note": note}
+
+    if allow_asr:
+        lines, err = _timeline(rel, lines, force_asr)
+    else:
+        err = None
+    if not lines:
+        note = "网站有词，但这首歌没有可用时间轴"
+        if err:
+            note += f"（识别失败：{err}）"
+        else:
+            note += "（格式不支持在线识别）；可上传 .lrc 或粘贴带时间戳的歌词"
+        return {"status": "no_timeline", "meta": meta, "lines": [], "note": note}
+
+    asr_lrc = "\n".join(lyr.fmt_ts(l["t"]) + l["text"] for l in lines)
+    try:
+        body = aifix.align(asr_lrc, info["lines"], info.get("title") or "",
+                           info.get("artist") or "")
+    except aifix.AifixError as e:
+        if str(e) == "NOT_MATCH":
+            return {"status": "no_site", "meta": meta, "lines": lines,
+                    "note": "网站有同名歌词，但内容对不上（疑似纯音乐或版本不同），"
+                            "下面是识别出的时间轴，可直接改文字后保存"}
+        return {"status": "ai_error", "meta": meta, "lines": lines,
+                "note": f"AI 对齐失败：{e}。下面是现有时间轴，可直接改文字后保存"}
+
+    new_lines = []
+    for line in body:
+        close = line.index("]")
+        sec = lyr.parse_seconds(line[:close + 1])
+        text = line[close + 1:].strip()
+        if sec is not None and text:
+            new_lines.append({"t": round(sec, 2), "text": text})
+    try:
+        bak = _save_lyric(rel, meta, new_lines)
     except OSError as e:
-        _asr_state.update(status="error", msg=f"读取音频失败：{e}")
-    except Exception as e:  # 后台线程兜底，避免静默失败
-        _asr_state.update(status="error", msg=f"未知错误：{e}")
+        return {"status": "ai_error", "meta": meta, "lines": new_lines,
+                "note": f"对齐成功但写入失败：{e}"}
+    out = {"status": "aligned", "meta": meta, "lines": new_lines, "saved": True,
+           "source": cand.get("label"),
+           "note": "来源「%s」，对齐 %d 行，已保存" % (cand.get("label"), len(new_lines))}
+    if bak:
+        out["backup"] = bak
+    return out
 
 
-@app.post("/api/songs/<path:sid>/autolrc")
-def api_autolrc(sid):
+@app.get("/api/songs/<path:sid>/lyric")
+def api_lyric_get(sid):
+    """歌词工坊打开时读取：元数据 + 逐行（时间/文字）。"""
     if lib.get(sid) is None:
         abort(404)
     if not music_dir_ready():
         return jsonify({"error": "优盘未挂载"}), 400
-    with _asr_lock:
-        if _asr_state["status"] == "running":
-            return jsonify({"error": "已有识别任务在进行中"}), 409
-        ext = os.path.splitext(sid)[1].lower()
-        if ext not in asr.SUPPORTED_EXTS:
-            return jsonify({"error": f"{ext} 格式不支持在线识别（支持 mp3/flac/m4a/wav），请手动上传歌词"}), 400
-        # 已有同名 .lrc 就直接用，不浪费一次识别
-        if lib.find_lrc(sid, MUSIC_MOUNT):
-            _asr_state.update(sid=sid, status="done", msg="发现同名 .lrc，已直接使用")
-            return jsonify({"started": True, "reused": True})
-        audio_path = safe_path(sid)
-        if not os.path.isfile(audio_path):
-            return jsonify({"error": "音频文件不存在"}), 404
-        _asr_state.update(sid=sid, status="running", msg="")
-        threading.Thread(target=_asr_worker, args=(sid, audio_path), daemon=True).start()
-    return jsonify({"started": True})
+    meta, lines = _read_lyric(sid)
+    return jsonify({"meta": meta, "lines": lines,
+                    "has_body": len(lines) > 2,
+                    "lrc": os.path.basename(_lrc_path(sid)) if os.path.isfile(_lrc_path(sid)) else None})
 
 
-@app.get("/api/asr/status")
-def api_asr_status():
-    return jsonify(_asr_state)
+@app.post("/api/songs/<path:sid>/lyric")
+def api_lyric_save(sid):
+    """保存歌词工坊的编辑结果；未传 meta 时自动沿用文件里原有的制作信息行。"""
+    if lib.get(sid) is None:
+        abort(404)
+    if not music_dir_ready():
+        return jsonify({"error": "优盘未挂载"}), 400
+    data = request.get_json(silent=True) or {}
+    raw_lines = data.get("lines")
+    if not isinstance(raw_lines, list):
+        return jsonify({"error": "缺少歌词行"}), 400
+    clean = []
+    for idx, item in enumerate(raw_lines, 1):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            sec = float(item.get("t") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": f"第 {idx} 行的时间不是数字"}), 400
+        clean.append({"t": max(0.0, round(sec, 2)), "text": text})
+    if not clean:
+        return jsonify({"error": "歌词内容为空"}), 400
+    clean.sort(key=lambda x: x["t"])
+
+    old_meta, _old_lines = _read_lyric(sid)
+    meta = data.get("meta")
+    if isinstance(meta, list):
+        meta = [str(m).strip() for m in meta if str(m).strip()]
+    else:
+        meta = old_meta
+    meta = meta or old_meta          # 前端清空了元数据也别真丢制作信息
+
+    try:
+        bak = _save_lyric(sid, meta, clean)
+    except OSError as e:
+        return jsonify({"error": f"写入失败：{e}"}), 500
+    out = {"ok": True, "lines": len(clean), "saved_as": os.path.basename(_lrc_path(sid))}
+    if bak:
+        out["backup"] = bak
+    return jsonify(out)
+
+
+@app.post("/api/songs/<path:sid>/lyric/auto")
+def api_lyric_auto(sid):
+    """自动补词：网站找词 + 时间轴 + AI 对齐。可能耗时 1~3 分钟（首次要跑 ASR）。"""
+    if lib.get(sid) is None:
+        abort(404)
+    if not music_dir_ready():
+        return jsonify({"error": "优盘未挂载"}), 400
+    if _fix_state["running"]:
+        return jsonify({"error": "已有批量补词任务在进行中，请稍后再试"}), 409
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify(_lyric_auto(sid, force_asr=bool(body.get("force_asr"))))
+    except asr.AsrError as e:
+        return jsonify({"error": f"语音识别失败：{e}"}), 502
+    except OSError as e:
+        return jsonify({"error": f"文件读写失败：{e}"}), 500
+
+
+@app.post("/api/songs/<path:sid>/lyric/asr")
+def api_lyric_asr(sid):
+    """强制重新识别时间轴（忽略缓存），只返回结果不写文件。"""
+    if lib.get(sid) is None:
+        abort(404)
+    if not music_dir_ready():
+        return jsonify({"error": "优盘未挂载"}), 400
+    try:
+        lines = lyr.parse_lines(_recognize(sid, force=True))
+    except asr.AsrError as e:
+        return jsonify({"error": f"语音识别失败：{e}"}), 502
+    except OSError as e:
+        return jsonify({"error": f"读取音频失败：{e}"}), 500
+    return jsonify({"lines": lines})
 
 
 # ==================== 歌词配对与孤儿清理 ====================
@@ -496,76 +718,26 @@ def _backup_lrc(lrc_path: str, rel: str) -> str | None:
         return None
 
 
-def _fix_one(rel: str) -> dict:
-    """对单首歌执行完整补词流程，返回结果 dict（不抛常规业务异常）。"""
-    full = os.path.join(MUSIC_MOUNT, rel)
-    stem = os.path.splitext(os.path.basename(rel))[0]
-    parts = [p.strip() for p in stem.split(" - ") if p.strip()]
-    pairs = [(parts[-1], parts[0]), (parts[0], parts[-1])] if len(parts) >= 2 else [(stem, "")]
-
-    # 1. 网站搜词（先搜再决定要不要 ASR，纯音乐在网站就没词，省一次识别）
-    cand = None
-    for title, artist in pairs:
-        if not title:
-            continue
-        try:
-            cand = lyr.find_best(title, artist)
-        except lyr.LyrError:
-            cand = None
-        if cand:
-            break
-    if cand is None:
-        return {"song": rel, "action": "skipped", "reason": "网站上没找到这首"}
+def _fix_one(rel: str, allow_asr: bool = True) -> dict:
+    """单首补词（批量复用）：走统一流水线，结果映射成批量进度用的 action。"""
     try:
-        info = lyr.fetch(cand["id"])
-    except lyr.LyrError as e:
-        return {"song": rel, "action": "skipped", "reason": f"取词失败：{e}"}
-
-    # 2. 时间轴：优先用现有 .lrc 里已有的；没有就跑 ASR
-    lrc_path = os.path.splitext(full)[0] + ".lrc"
-    meta, ts_lines = [], []
-    if os.path.isfile(lrc_path):
-        try:
-            with open(lrc_path, "r", encoding="utf-8", errors="replace") as f:
-                meta, ts_lines = lyr.split_lrc(f.read())
-        except OSError:
-            pass
-    if not ts_lines:
-        ext = os.path.splitext(rel)[1].lower()
-        if ext not in asr.SUPPORTED_EXTS:
-            return {"song": rel, "action": "skipped", "reason": f"网站有词，但 {ext} 无法自动识别时间轴"}
-        try:
-            with open(full, "rb") as f:
-                asr_text = asr.recognize(f.read())
-            _, ts_lines = lyr.split_lrc(asr_text)
-        except asr.AsrError as e:
-            return {"song": rel, "action": "skipped", "reason": f"网站有词，但识别时间轴失败：{e}"}
-        if not ts_lines:
-            return {"song": rel, "action": "skipped", "reason": "网站有词，但没识别出时间轴"}
-    asr_lrc = "\n".join(ts + text for ts, text in ts_lines)
-
-    # 3. AI 校对对齐
-    try:
-        body = aifix.align(asr_lrc, info["lines"], info["title"] or stem, info["artist"])
-    except aifix.AifixError as e:
-        if str(e) == "NOT_MATCH":
-            return {"song": rel, "action": "skipped", "reason": "疑似纯音乐（AI 判定内容不符）"}
-        return {"song": rel, "action": "error", "reason": f"AI 校对失败：{e}"}
-
-    # 4. 元数据 + 新正文合并写回（写前备份）
-    final = "\n".join(meta + ([""] if meta else []) + body) + "\n"
-    bak = _backup_lrc(lrc_path, rel) if os.path.isfile(lrc_path) else None
-    try:
-        with open(lrc_path, "w", encoding="utf-8") as f:
-            f.write(final)
-    except OSError as e:
-        return {"song": rel, "action": "error", "reason": f"写入失败：{e}"}
-    if lib.get(rel) is not None:       # 清掉可能存在的旧内嵌歌词，避免双源不一致
-        lib.update(rel, lyrics=None)
-    out = {"song": rel, "action": "updated", "lines": len(body), "source": cand["label"]}
-    if bak:
-        out["backup"] = bak
-    return out
+        out = _lyric_auto(rel, allow_asr=allow_asr)
+    except Exception as e:                 # 单首失败不拖垮整批
+        return {"song": rel, "action": "error", "reason": f"未知错误：{e}"}
+    status = out.get("status")
+    if status == "aligned":
+        res = {"song": rel, "action": "updated", "lines": len(out.get("lines") or []),
+               "source": out.get("source")}
+        if out.get("backup"):
+            res["backup"] = out["backup"]
+        return res
+    if status == "no_site":
+        reason = "网站上没找到这首（可在歌词工坊手动补）"
+    elif status == "no_timeline":
+        reason = "没有可用时间轴"
+    else:
+        reason = out.get("note") or "AI 校对失败"
+    return {"song": rel, "action": "skipped", "reason": reason}
 
 
 def _fix_worker(rels: list, mode: str) -> None:
@@ -577,7 +749,8 @@ def _fix_worker(rels: list, mode: str) -> None:
                 break
             _fix_state.update(current=rel)
             try:
-                result = _fix_one(rel)
+                # 批量模式不跑 ASR：没词的歌先跳过（ASR 很贵，留给用户在歌词工坊单首处理）
+                result = _fix_one(rel, allow_asr=(mode != "batch"))
             except Exception as e:             # 后台线程兜底，单首失败不拖垮整批
                 result = {"song": rel, "action": "error", "reason": f"未知错误：{e}"}
             _fix_state["results"].append(result)

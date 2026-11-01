@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>音乐播放器</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=20261101g">
+  <link rel="stylesheet" href="/static/css/style.css?v=20261101h">
 </head>
 <body>
   <div class="home-bg"></div>
@@ -114,8 +114,26 @@
     </div>
   </div>
 
+  <!-- 歌词工坊：缺词清单（替代原来的独立补词页） -->
+  <div id="lyric-hub" class="netease hidden">
+    <div class="net-top">
+      <button id="hub-close" class="round-btn" title="返回">←</button>
+      <h2>歌词工坊</h2>
+      <button id="hub-batch" class="mini-btn" title="批量补「网站有词」的歌">一键补词</button>
+    </div>
+    <div class="net-body">
+      <p class="net-tip" style="margin:0 0 10px">
+        这里列出还没有歌词（或只剩作词作曲）的歌。点行尾「编辑」即可逐行修改时间与文字；
+        「自动补词」会先到歌词网站找词、再让 AI 对齐时间轴，网站没有时自动退回语音识别的时间轴。
+      </p>
+      <p id="hub-count" class="hint-text"></p>
+      <ul id="hub-list" class="net-songs"></ul>
+      <p id="hub-empty" class="empty-hint" hidden>全都齐了，没有缺歌词的歌 🎉</p>
+    </div>
+  </div>
+
   <div id="modal-root"></div>
   <audio id="audio"></audio>
-  <script src="/static/js/main.js?v=20261101i"></script>
+  <script src="/static/js/main.js?v=20261101j"></script>
 </body>
 </html>

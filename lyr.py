@@ -176,6 +176,57 @@ def lrc_body_count(raw: str) -> int:
     return sum(1 for t in lrc_lines(raw) if not CREDIT_RE.search(t))
 
 
+def parse_seconds(ts: str) -> float | None:
+    """'[01:23.45]' / '1:23.45' / '01:23:45' -> 秒（float）；解析失败返回 None。"""
+    m = TS_RE.match(ts) or re.match(r"^\[?(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]?$", ts.strip())
+    if not m:
+        return None
+    minute, sec = int(m.group(1)), int(m.group(2))
+    frac = m.group(3) or "0"
+    return minute * 60 + sec + int(frac.ljust(3, "0")[:3]) / 1000
+
+
+def fmt_ts(seconds: float) -> str:
+    """秒 -> '[mm:ss.xx]'（LRC 标准两位厘秒）。"""
+    seconds = max(0.0, float(seconds))
+    minute, rest = divmod(seconds, 60)
+    return "[%02d:%05.2f]" % (int(minute), rest)
+
+
+def parse_lines(raw: str) -> list:
+    """LRC 原文 -> [{'t': 秒, 'text': 文本}]（只保留有时间戳且非制作信息的行）。"""
+    out = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        m = TS_RE.match(s)
+        if not m:
+            continue
+        text = TS_RE.sub("", s).strip()
+        if not text or CREDIT_RE.search(text):
+            continue
+        sec = parse_seconds(m.group(0))
+        if sec is None:
+            continue
+        out.append({"t": round(sec, 2), "text": text})
+    return out
+
+
+def build_lrc(meta: list, lines: list) -> str:
+    """元数据行（原样保留）+ 时间戳正文 -> LRC 文本。"""
+    body = []
+    for item in lines:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        body.append(fmt_ts(float(item.get("t") or 0)) + text)
+    parts = list(meta or [])
+    if parts and body:
+        parts.append("")
+    return "\n".join(parts + body) + "\n"
+
+
 def split_lrc(raw: str) -> tuple:
     """拆成 (元数据行列表, 时间戳行列表)。
 

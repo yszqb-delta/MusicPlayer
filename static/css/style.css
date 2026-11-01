@@ -397,9 +397,43 @@ textarea.lrc-input:focus { border-color: var(--accent); }
 
 /* 手动补词页 */
 .hint-text { font-size: 12px; color: var(--muted); }
-.lyrfix-form { flex-basis: 100%; padding: 8px 6px 4px; }
-.lyrfix-form textarea { height: 160px; }
-.lyrfix-form .row { display: flex; gap: 10px; align-items: center; }
+
+/* ==================== 歌词工坊 ==================== */
+.modal.wide { width: min(780px, 96vw); max-height: 90vh; display: flex; flex-direction: column; }
+.ls-title { margin-bottom: 6px !important; }
+.ls-status { font-size: 12px; color: var(--muted); margin-bottom: 10px; line-height: 1.6; }
+.ls-status.ok { color: #7fdc9f; }
+.ls-status.warn { color: #f0c86a; }
+.ls-status.error { color: #ff9c9c; }
+.ls-status.busy { color: var(--accent); }
+.ls-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.ls-spacer { flex: 1 1 auto; }
+.ls-lines {
+  flex: 1 1 auto; min-height: 170px; max-height: 46vh; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px;
+  background: rgba(0,0,0,.18);
+}
+.ls-empty { font-size: 12px; color: var(--muted); padding: 20px 10px; text-align: center; line-height: 1.8; }
+.ls-row { display: grid; grid-template-columns: 24px 24px 80px 1fr 22px; gap: 6px; align-items: center; padding: 3px 2px; }
+.ls-idx { font-size: 11px; color: var(--faint); text-align: right; }
+.ls-play, .ls-del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0; line-height: 1; }
+.ls-play:hover { color: var(--accent); }
+.ls-del:hover { color: var(--danger); }
+.ls-row input {
+  width: 100%; min-width: 0; padding: 5px 8px; font-size: 12.5px; border-radius: 6px;
+  border: 1px solid transparent; background: rgba(255,255,255,.04); color: var(--text); outline: none;
+}
+.ls-row input:focus { border-color: var(--accent); background: rgba(0,0,0,.3); }
+.ls-row .ls-ts { text-align: center; color: var(--accent); font-variant-numeric: tabular-nums; }
+.ls-foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.ls-foot .primary-btn { padding: 7px 20px; }
+.hub-item { cursor: pointer; }
+@media (max-width: 600px) {
+  .modal.wide { width: 96vw; padding: 16px 14px; }
+  .ls-row { grid-template-columns: 18px 22px 72px 1fr 18px; gap: 4px; }
+  .ls-row input { font-size: 12px; padding: 5px 6px; }
+  .ls-tools .mini-btn { font-size: 11px; }
+}
 
 /* ==================== 上传页 ==================== */
 .upload-app { max-width: 640px; }

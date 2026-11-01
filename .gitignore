@@ -5,6 +5,7 @@ netease_session.json
 login_debug.json
 ai_config.json
 lrc_backup/
+asr_cache/
 covers/
 static/covers/
 static/bg/

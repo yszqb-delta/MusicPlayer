@@ -36,11 +36,11 @@ const esc = (s) => {
 
 /* ==================== 弹窗 ==================== */
 const Modal = {
-  open(html, onMount) {
+  open(html, onMount, extraClass = "") {
     this.close();
     const mask = document.createElement("div");
     mask.className = "modal-mask";
-    mask.innerHTML = `<div class="modal">${html}</div>`;
+    mask.innerHTML = `<div class="modal${extraClass ? " " + extraClass : ""}">${html}</div>`;
     mask.addEventListener("click", (e) => { if (e.target === mask) this.close(); });
     document.getElementById("modal-root").appendChild(mask);
     if (onMount) onMount(mask.firstElementChild);
@@ -148,9 +148,7 @@ function renderList() {
       <span class="song-edit">
         <button class="mini-btn" data-act="rename">改名</button>
         <button class="mini-btn" data-act="cover">封面</button>
-        <button class="mini-btn" data-act="lyrics">歌词</button>
-        <button class="mini-btn" data-act="autolrc">识别</button>
-        <button class="mini-btn" data-act="lyrfix">补词</button>
+        <button class="mini-btn" data-act="lyric">歌词</button>
         <button class="mini-btn danger" data-act="delete">删除</button>
       </span>`;
 
@@ -170,9 +168,7 @@ function renderList() {
         const act = btn.dataset.act;
         if (act === "rename") editRename(s);
         if (act === "cover") editCover(s);
-        if (act === "lyrics") editLyrics(s);
-        if (act === "autolrc") editAutolrc(s, btn);
-        if (act === "lyrfix") editLyrfix(s, btn);
+        if (act === "lyric") LyricStudio.open(s);
         if (act === "delete") editDelete(s);
       });
     });
@@ -254,99 +250,323 @@ function editCover(song) {
   });
 }
 
-function editLyrics(song) {
-  Modal.open(`
-    <h3>连接字幕（歌词）</h3>
-    <textarea class="lrc-input" id="lrc-text" placeholder="粘贴 LRC 歌词（Ctrl+回车 保存），或选择下方上传 .lrc 文件"></textarea>
-    <div class="row">
-      <button class="ghost-btn" data-x="pick">上传 .lrc 文件</button>
-      <button class="primary-btn" data-x="save">保存歌词</button>
-    </div>
-    <input type="file" id="lrc-file" accept=".lrc,text/plain" hidden>`, (m) => {
-    const textEl = m.querySelector("#lrc-text");
-    const fileInput = m.querySelector("#lrc-file");
-    const save = (text) => api(`/api/songs/${encodeURIComponent(song.path)}/lyrics`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    }).then((r) => {
-      Modal.close();
-      alert("歌词已保存为 " + r.saved_as + "（与音乐同目录并列存放）");
-      player.refreshLyricsIfCurrent(song.path);
-    }).catch((e) => alert(e.message));
+/* ==================== 歌词工坊 ==================== */
+/* 一条链路取代原来的「歌词 / 识别 / 补词」三个按钮：
+ *   打开即列出现有歌词的每一行（时间 + 文字），用户在基础上改；
+ *   「自动补词」= 网站找词 + 必剪识别时间轴 + AI 逐行对齐纠错；
+ *   网站没词时自动退回识别时间轴，列出来给人改，不用从零写。 */
 
-    m.querySelector("[data-x=save]").onclick = () => { if (textEl.value.trim()) save(textEl.value); };
-    bindEnter(textEl, m.querySelector("[data-x=save]"), true);   // Ctrl+回车 保存
-    m.querySelector("[data-x=pick]").onclick = () => fileInput.click();
-    fileInput.onchange = () => {
+const fmtTs = (sec) => {
+  const v = Math.max(0, Number(sec) || 0);
+  const m = Math.floor(v / 60);
+  return `${String(m).padStart(2, "0")}:${(v - m * 60).toFixed(2).padStart(5, "0")}`;
+};
+
+const parseTs = (str) => {
+  const s = String(str || "").trim().replace(/^\[|\]$/g, "");
+  const m = s.match(/^(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?$/);
+  if (m) return Number(m[1]) * 60 + Number(m[2]) + (m[3] ? Number("0." + m[3]) : 0);
+  const n = Number(s);
+  return s !== "" && isFinite(n) ? n : NaN;
+};
+
+const LyricStudio = {
+  song: null,
+  meta: [],
+
+  open(song) {
+    this.song = song;
+    this.meta = [];
+    Modal.open(`
+      <h3 class="ls-title">歌词 · ${esc(songTitle(song))}</h3>
+      <p id="ls-status" class="ls-status">读取中…</p>
+      <div class="ls-tools">
+        <button class="mini-btn" data-x="auto">自动补词</button>
+        <button class="mini-btn" data-x="asr">重新识别时间轴</button>
+        <button class="mini-btn" data-x="pick">上传 .lrc</button>
+        <span class="ls-spacer"></span>
+        <button class="mini-btn" data-x="shift" data-v="-0.5" title="全部时间轴提前 0.5 秒">-0.5s</button>
+        <button class="mini-btn" data-x="shift" data-v="0.5" title="全部时间轴延后 0.5 秒">+0.5s</button>
+      </div>
+      <div id="ls-lines" class="ls-lines"></div>
+      <div class="ls-foot">
+        <button class="mini-btn" data-x="add">＋ 加一行</button>
+        <span id="ls-count" class="hint-text"></span>
+        <span class="ls-spacer"></span>
+        <button class="primary-btn" data-x="save">保存</button>
+      </div>
+      <input type="file" id="ls-file" accept=".lrc,text/plain" hidden>`,
+    (m) => this.bind(m), "wide");
+  },
+
+  bind(m) {
+    const fileInput = m.querySelector("#ls-file");
+    m.querySelectorAll("[data-x]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const act = btn.dataset.x;
+        if (act === "auto") this.auto(m);
+        if (act === "asr") this.asr(m);
+        if (act === "pick") fileInput.click();
+        if (act === "shift") this.shift(Number(btn.dataset.v));
+        if (act === "add") this.addRow();
+        if (act === "save") this.save(m);
+      });
+    });
+    fileInput.addEventListener("change", () => {
       const f = fileInput.files[0];
       if (!f) return;
       const reader = new FileReader();
-      reader.onload = () => save(reader.result);
+      reader.onload = () => {
+        const lines = String(reader.result || "").split(/\r?\n/).map((line) => {
+          const mm = line.match(/^\s*\[(\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?)\]\s*(.*)$/);
+          if (!mm || !mm[2].trim()) return null;
+          const t = parseTs(mm[1]);
+          return isFinite(t) ? { t, text: mm[2].trim() } : null;
+        }).filter(Boolean);
+        if (!lines.length) { alert("这个文件里没有带时间戳的歌词行"); return; }
+        this.renderRows(lines);
+        this.setStatus(`已载入 ${lines.length} 行，记得点保存`, "ok");
+      };
       reader.readAsText(f, "utf-8");
+    });
+    this.load(m);
+  },
+
+  async load(m) {
+    try {
+      const d = await api(`/api/songs/${encodeURIComponent(this.song.path)}/lyric`);
+      this.meta = d.meta || [];
+      this.renderRows(d.lines || []);
+      const metaNote = this.meta.length ? `（已保留 ${this.meta.length} 行制作信息）` : "";
+      this.setStatus(d.lines.length
+        ? `现有 ${d.lines.length} 行${metaNote}，改完点保存`
+        : `还没有歌词行${metaNote}，可以「自动补词」或手动加行`);
+    } catch (e) {
+      this.setStatus("读取失败：" + e.message, "error");
+    }
+  },
+
+  renderRows(lines) {
+    const box = document.querySelector("#ls-lines");
+    if (!box) return;
+    box.innerHTML = "";
+    if (!lines.length) {
+      box.innerHTML = `<p class="ls-empty">还没有歌词行。点「自动补词」让网站找词 + AI 对齐；网站没有的话会自动退回识别时间轴，再手动改文字。</p>`;
+    }
+    lines.forEach((item) => box.appendChild(this.makeRow(item)));
+    this.updateCount();
+    document.querySelectorAll("#ls-lines .ls-row").forEach((row, i) => {
+      const idx = row.querySelector(".ls-idx");
+      if (idx) idx.textContent = i + 1;
+    });
+  },
+
+  makeRow(item) {
+    const div = document.createElement("div");
+    div.className = "ls-row";
+    div.innerHTML = `
+      <span class="ls-idx"></span>
+      <button class="ls-play" title="从这句开始播放">▶</button>
+      <input class="ls-ts" value="${fmtTs(item.t)}" inputmode="decimal">
+      <input class="ls-txt" value="${esc(item.text || "")}" placeholder="歌词文字">
+      <button class="ls-del" title="删除这一行">✕</button>`;
+    div.querySelector(".ls-play").addEventListener("click", () => this.playLine(item.t));
+    div.querySelector(".ls-del").addEventListener("click", () => {
+      div.remove();
+      this.reindex();
+    });
+    div.querySelectorAll("input").forEach((inp) =>
+      inp.addEventListener("input", () => this.updateCount()));
+    return div;
+  },
+
+  addRow() {
+    const box = document.querySelector("#ls-lines");
+    if (!box) return;
+    const empty = box.querySelector(".ls-empty");
+    if (empty) empty.remove();
+    const rows = box.querySelectorAll(".ls-row");
+    const last = rows.length ? parseTs(rows[rows.length - 1].querySelector(".ls-ts").value) : -5;
+    const t = isFinite(last) ? last + 5 : 0;
+    const row = this.makeRow({ t, text: "" });
+    box.appendChild(row);
+    this.reindex();
+    row.querySelector(".ls-txt").focus();
+  },
+
+  reindex() {
+    document.querySelectorAll("#ls-lines .ls-row").forEach((row, i) => {
+      const idx = row.querySelector(".ls-idx");
+      if (idx) idx.textContent = i + 1;
+    });
+    this.updateCount();
+  },
+
+  updateCount() {
+    const el = document.querySelector("#ls-count");
+    if (!el) return;
+    const rows = document.querySelectorAll("#ls-lines .ls-row");
+    const filled = [...rows].filter((r) => r.querySelector(".ls-txt").value.trim()).length;
+    el.textContent = `${filled} 行`;
+  },
+
+  collect() {
+    const rows = [...document.querySelectorAll("#ls-lines .ls-row")];
+    const lines = [], bad = [];
+    rows.forEach((row, i) => {
+      const text = row.querySelector(".ls-txt").value.trim();
+      if (!text) return;
+      const t = parseTs(row.querySelector(".ls-ts").value);
+      if (!isFinite(t)) { bad.push(i + 1); return; }
+      lines.push({ t, text });
+    });
+    lines.sort((a, b) => a.t - b.t);
+    return { lines, bad };
+  },
+
+  setStatus(text, kind = "") {
+    const el = document.querySelector("#ls-status");
+    if (!el) return;
+    el.textContent = text;
+    el.className = "ls-status" + (kind ? " " + kind : "");
+  },
+
+  setBusy(busy, text) {
+    const m = document.querySelector("#modal-root .modal");
+    if (!m) return;
+    m.querySelectorAll(".ls-tools button").forEach((b) => { b.disabled = busy; });
+    if (busy && text) this.setStatus(text, "busy");
+  },
+
+  async auto(m) {
+    this.setBusy(true, "网站上找词 + AI 对齐中…首次需要识别时间轴，约 1~3 分钟，请不要关闭窗口");
+    try {
+      const r = await api(`/api/songs/${encodeURIComponent(this.song.path)}/lyric/auto`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      this.meta = r.meta || this.meta;
+      this.renderRows(r.lines || []);
+      this.setStatus(r.note || "完成", r.status === "aligned" ? "ok" : "warn");
+      player.refreshLyricsIfCurrent(this.song.path);
+      if (r.status === "aligned") LyricHub.refreshIfOpen();
+    } catch (e) {
+      this.setStatus("自动补词失败：" + e.message, "error");
+    }
+    this.setBusy(false);
+  },
+
+  async asr(m) {
+    if (!confirm("重新识别会用语音识别结果替换下面列表的文字（不会自动保存，保存前可以改）。继续？")) return;
+    this.setBusy(true, "语音识别中…约 1~3 分钟，请不要关闭窗口");
+    try {
+      const r = await api(`/api/songs/${encodeURIComponent(this.song.path)}/lyric/asr`, { method: "POST" });
+      this.renderRows(r.lines || []);
+      this.setStatus(`识别出 ${(r.lines || []).length} 行，文字可能有错别字，核对后再保存`, "warn");
+    } catch (e) {
+      this.setStatus("识别失败：" + e.message, "error");
+    }
+    this.setBusy(false);
+  },
+
+  shift(delta) {
+    document.querySelectorAll("#ls-lines .ls-row").forEach((row) => {
+      const inp = row.querySelector(".ls-ts");
+      const t = parseTs(inp.value);
+      if (isFinite(t)) inp.value = fmtTs(Math.max(0, t + delta));
+    });
+    this.setStatus(`全部时间已${delta > 0 ? "延后" : "提前"} ${Math.abs(delta)} 秒（记得保存）`, "warn");
+  },
+
+  playLine(t) {
+    const seek = () => {
+      try {
+        player.audio.currentTime = Math.max(0, t - 0.15);
+        player.audio.play().catch(() => {});
+      } catch (e) { /* 音频还没就绪就忽略 */ }
     };
-  });
-}
+    if (player.current && player.current.path === this.song.path) { seek(); return; }
+    player.playSong(this.song.path);
+    const onReady = () => { player.audio.removeEventListener("loadedmetadata", onReady); seek(); };
+    player.audio.addEventListener("loadedmetadata", onReady);
+    setTimeout(() => player.audio.removeEventListener("loadedmetadata", onReady), 8000);
+  },
 
-/* 调必剪 ASR 自动识别歌词：启动后台任务并轮询，成功后刷新列表与当前歌词 */
-function editAutolrc(song, btn) {
-  api(`/api/songs/${encodeURIComponent(song.path)}/autolrc`, { method: "POST" })
-    .then(() => {
-      const original = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = "识别中…";
-      const timer = setInterval(async () => {
-        let st;
-        try { st = await api("/api/asr/status"); } catch { return; }
-        if (st.status === "running") return;
-        clearInterval(timer);
-        btn.disabled = false;
-        btn.textContent = original;
-        if (st.status === "done") {
-          loadSongs();
-          player.refreshLyricsIfCurrent(song.path);
-        } else if (st.status === "error") {
-          alert("识别失败：" + st.msg + "\n可以改用「歌词」按钮手动上传。");
-        }
-      }, 2000);
-    })
-    .catch((e) => alert(e.message));
-}
+  async save(m) {
+    const { lines, bad } = this.collect();
+    if (bad.length) { alert(`第 ${bad.join("、")} 行的时间格式不对，请写成 00:12.34`); return; }
+    if (!lines.length) { alert("还没有歌词内容"); return; }
+    try {
+      const r = await api(`/api/songs/${encodeURIComponent(this.song.path)}/lyric`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lines, meta: this.meta }),
+      });
+      this.setStatus(`已保存 ${r.lines} 行 → ${r.saved_as}`, "ok");
+      player.refreshLyricsIfCurrent(this.song.path);
+      loadSongs();
+      LyricHub.refreshIfOpen();
+    } catch (e) {
+      alert(e.message);
+    }
+  },
+};
 
-/* 补词：网站找词 + AI 校对对齐（单首），轮询共享状态直到结束 */
-function editLyrfix(song, btn) {
-  api(`/api/songs/${encodeURIComponent(song.path)}/lyrfix`, { method: "POST" })
-    .then(() => {
-      const original = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = "补词中…";
-      const timer = setInterval(async () => {
-        let st;
-        try { st = await api("/api/lyrfix/status"); } catch { return; }
-        if (st.running) return;
-        clearInterval(timer);
-        btn.disabled = false;
-        btn.textContent = original;
-        const r = (st.results && st.results[0]) || null;
-        if (r && r.action === "updated") {
-          loadSongs();
-          player.refreshLyricsIfCurrent(song.path);
-          alert(`补词完成：来源「${r.source || "?"}」，共 ${r.lines} 行`);
-        } else if (r) {
-          alert("没有补上：" + (r.reason || "未知原因"));
-        } else {
-          alert("没有补上：未知状态");
-        }
-      }, 2000);
-    })
-    .catch((e) => alert(e.message));
-}
+/* 站内「缺词列表」：替代原来的独立补词页 */
+const LyricHub = {
+  open() {
+    const el = $("#lyric-hub");
+    if (!el) return;
+    el.classList.remove("hidden");
+    document.body.classList.add("netease-open");
+    this.load();
+  },
 
-/* 一键补词：批量处理全库缺词的歌，弹窗显示进度与结果明细 */
+  close() {
+    $("#lyric-hub").classList.add("hidden");
+    document.body.classList.remove("netease-open");
+  },
+
+  refreshIfOpen() {
+    if ($("#lyric-hub") && !$("#lyric-hub").classList.contains("hidden")) this.load();
+  },
+
+  async load() {
+    const ul = $("#hub-list");
+    const tip = $("#hub-count");
+    ul.innerHTML = `<li class="net-loading">加载中…</li>`;
+    try {
+      const d = await api("/api/lyrfix/needy");
+      const songs = d.songs || [];
+      tip.textContent = songs.length ? `缺词 ${songs.length} 首` : "";
+      $("#hub-empty").hidden = songs.length > 0;
+      ul.innerHTML = "";
+      songs.forEach((s) => {
+        const li = document.createElement("li");
+        li.className = "net-song hub-item";
+        li.innerHTML = `
+          <div class="net-info">
+            <div class="net-name">${esc(s.title)}</div>
+            <div class="net-artist">${s.has_lrc ? "只有制作信息" : "还没有歌词文件"} · ${esc(s.path)}</div>
+          </div>
+          <button class="mini-btn">编辑</button>`;
+        li.querySelector("button").addEventListener("click", () => {
+          const song = state.songs.find((x) => x.path === s.path);
+          if (!song) { alert("这首歌已不在列表里，请刷新页面"); return; }
+          LyricStudio.open(song);
+        });
+        ul.appendChild(li);
+      });
+    } catch (e) {
+      ul.innerHTML = "";
+      tip.textContent = "加载失败：" + e.message;
+    }
+  },
+};
+
+/* 一键补词：批量跑「网站有词」的歌（不跑 ASR，纯音乐自动跳过） */
 function batchLyrfix() {
   api("/api/lyrfix/batch", { method: "POST" })
     .then((r) => {
-      if (r.total === 0) { alert(r.msg || "没有需要补词的歌"); return; }
+      if (r.total === 0) { alert(r.msg || "没有需要补词的歌（或都已处理）"); return; }
       Modal.open(`
         <h3>批量补词（${r.total} 首）</h3>
         <p id="bf-progress" class="bf-progress">0 / ${r.total}</p>
@@ -370,7 +590,7 @@ function batchLyrfix() {
           m.querySelector("[data-x=stop]").hidden = true;
           const closeBtn = m.querySelector("[data-x=close]");
           closeBtn.hidden = false;
-          closeBtn.onclick = () => { Modal.close(); loadSongs(); };
+          closeBtn.onclick = () => { Modal.close(); loadSongs(); LyricHub.refreshIfOpen(); };
           loadSongs();
         }, 2000);
         m.querySelector("[data-x=stop]").onclick = async () => {
@@ -400,8 +620,8 @@ const PANELS = [
   {
     id: "lyrfix",
     title: "歌词工坊",
-    desc: "手动补词：给缺歌词的歌粘贴或上传 LRC",
-    actions: [{ label: "打开补词页", primary: true, onClick: () => window.open("/lyrfix") }],
+    desc: "缺词清单：自动补词、逐行手动修改",
+    actions: [{ label: "打开工坊", primary: true, onClick: () => LyricHub.open() }],
   },
   {
     id: "usb",
@@ -1227,6 +1447,9 @@ function initPlayerUI() {
   };
 
   $("#btn-lyrfix-batch").onclick = batchLyrfix;
+
+  $("#hub-close").onclick = () => LyricHub.close();
+  $("#hub-batch").onclick = batchLyrfix;
 
   $("#btn-netease").onclick = () => Netease.open();
   $("#net-back").onclick = () => Netease.close();
