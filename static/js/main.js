@@ -1127,36 +1127,45 @@ const Lyrics = {
   currentIndex: -1,
 
   parse(lrcText) {
-    // 兼容网易云导出的 JSON 歌词：整体数组或每行一个对象（JSONL）
-    if (typeof lrcText === "string" && lrcText.trim().startsWith("{")) {
-      let arr = null;
+    if (typeof lrcText !== "string") return [];
+    // 网易云 JSON 歌词（整体数组 / 每行一个对象）转成标准 LRC 行；
+    // 注意同一文件可能是混合的：前半是 JSONL credits，后半是标准 [mm:ss.xx] 歌词，
+    // 所以必须逐行判断，不能整文件二选一（否则后半段会被整段丢掉）。
+    const chunks = [];
+    const pushJson = (obj) => {
+      const list = Array.isArray(obj) ? obj : [obj];
+      list.forEach((l) => {
+        if (!l || typeof l !== "object" || l.t === undefined) return;
+        const sec = (Number(l.t) || 0) / 1000;
+        const m = Math.floor(sec / 60);
+        const s = (sec % 60).toFixed(2).padStart(5, "0");
+        chunks.push(`[${m}:${s}]${(l.c || []).map((c) => (c && c.tx) || "").join("")}`);
+      });
+    };
+    const body = lrcText.trim();
+    let whole = null;
+    if (body.startsWith("[") && body.endsWith("]")) {
       try {
-        const whole = JSON.parse(lrcText);
-        if (Array.isArray(whole)) arr = whole;
-      } catch { /* 整体不是 JSON，尝试逐行解析 */ }
-      if (!arr) {
-        arr = [];
-        for (const line of lrcText.split(/\r?\n/)) {
-          if (!line.trim().startsWith("{")) continue;
-          try {
-            const o = JSON.parse(line);
-            if (Array.isArray(o)) arr.push(...o);
-            else if (o && typeof o === "object") arr.push(o);
-          } catch { /* 跳过无法解析的行 */ }
+        const j = JSON.parse(body);
+        if (Array.isArray(j) && j.some((x) => x && typeof x === "object" && x.t !== undefined)) whole = j;
+      } catch { /* 不是整体 JSON，走逐行 */ }
+    }
+    if (whole) {
+      pushJson(whole);
+    } else {
+      lrcText.split(/\r?\n/).forEach((raw) => {
+        const line = raw.trim();
+        if (!line) return;
+        if (line.startsWith("{")) {
+          try { pushJson(JSON.parse(line)); } catch { /* 跳过坏行 */ }
+        } else if (line.startsWith("[")) {
+          chunks.push(line);
         }
-      }
-      if (arr && arr.length) {
-        lrcText = arr.map((l) => {
-          const sec = (Number(l.t) || 0) / 1000;
-          const m = Math.floor(sec / 60);
-          const s = (sec % 60).toFixed(2).padStart(5, "0");
-          return `[${m}:${s}]${(l.c || []).map((c) => c.tx || "").join("")}`;
-        }).join("\n");
-      }
+      });
     }
     const out = [];
     const re = /\[(\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)\]/g;
-    lrcText.split(/\r?\n/).forEach((raw) => {
+    chunks.join("\n").split(/\r?\n/).forEach((raw) => {
       const text = raw.replace(re, "").trim();
       let m;
       re.lastIndex = 0;
