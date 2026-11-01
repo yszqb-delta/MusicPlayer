@@ -1,0 +1,17 @@
+venv/
+music/
+*.mp3
+*.flac
+*.m4a
+*.wav
+*.ape
+*.ogg
+music_meta.json
+settings.json
+netease_session.json
+ai_config.json
+lrc_backup/
+covers/
+static/img/bg/
+__pycache__/
+*.pyc
