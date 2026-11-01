@@ -1,0 +1,6 @@
+{
+  "_comment": "复制本文件为 ai_config.json 并填入你自己的凭据（ai_config.json 已被 .gitignore 排除，不会提交）。任何 OpenAI 兼容接口均可，留空或不建此文件时仅「AI 校对补词」功能不可用，其余功能不受影响。",
+  "base_url": "https://api.deepseek.com",
+  "api_key": "sk-你的密钥",
+  "model": "deepseek-flash"
+}

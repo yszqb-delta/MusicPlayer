@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>上传音乐</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=20261031b">
+</head>
+<body>
+  <div class="app upload-app">
+    <header class="topbar">
+      <h1 class="logo">♪ 上传音乐</h1>
+      <a href="/" class="ghost-btn" style="text-decoration:none">返回主页</a>
+    </header>
+
+    <main>
+      <div id="drop-zone" class="drop-zone">
+        <p class="dz-icon">⇪</p>
+        <p>把音乐文件拖到这里，或</p>
+        <button id="btn-pick" class="primary-btn">选择文件</button>
+        <p class="dz-hint">支持 mp3 / flac / m4a / wav / ogg 等，可多选</p>
+      </div>
+      <input id="file-input" type="file" multiple accept="audio/*,.mp3,.flac,.m4a,.aac,.wav,.ogg,.wma,.ape" hidden>
+
+      <ul id="upload-list" class="upload-list"></ul>
+    </main>
+  </div>
+  <script src="/static/js/upload.js?v=20261031b"></script>
+</body>
+</html>

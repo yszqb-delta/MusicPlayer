@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>音乐播放器</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=20261101f">
+</head>
+<body>
+  <div class="home-bg"></div>
+  <div class="app">
+    <header class="topbar">
+      <h1 class="logo">♪ 音乐</h1>
+      <div class="topbar-actions">
+        <select id="sort-select" class="sort-select" title="排序方式">
+          <option value="default">默认排序</option>
+          <option value="alpha">按首字母</option>
+          <option value="rating">按星级</option>
+        </select>
+        <button id="btn-lyrfix-batch" class="ghost-btn" hidden title="为缺歌词的歌批量补全（网站找词 + AI 校对）">一键补词</button>
+        <button id="btn-netease" class="ghost-btn" title="网易云音乐：每日推荐 / 歌单 / 下载">网易云</button>
+        <button id="btn-bg" class="ghost-btn" title="更换背景">背景</button>
+        <button id="btn-edit" class="ghost-btn">编辑</button>
+      </div>
+    </header>
+
+    <main>
+      <ul id="song-list" class="song-list"></ul>
+      <p id="empty-hint" class="empty-hint" hidden>
+        还没有歌曲。挂载优盘并上传音乐后，点击「刷新」即可。
+      </p>
+    </main>
+
+    <footer id="panels" class="panels"><!-- 底部功能卡片，由 JS 渲染 --></footer>
+  </div>
+
+  <!-- 沉浸式播放页 -->
+  <div id="player" class="player hidden">
+    <div class="player-bg"></div>
+    <div class="player-top">
+      <button id="btn-back" class="round-btn" title="返回">←</button>
+      <div class="player-title">
+        <div id="pl-title">未在播放</div>
+        <div id="pl-rating" class="pl-rating"></div>
+      </div>
+      <button id="btn-fs" class="round-btn" title="全屏">⛶</button>
+    </div>
+
+    <div class="player-body">
+      <div class="disc-wrap">
+        <div id="disc" class="disc">
+          <div id="disc-fallback" class="disc-fallback">♪</div>
+          <img id="disc-img" class="hidden" alt="封面">
+        </div>
+      </div>
+      <div class="lyrics-wrap">
+        <div id="lyrics" class="lyrics"><div class="lyric-line dim">暂无歌词</div></div>
+      </div>
+    </div>
+
+    <div class="player-bottom">
+      <div class="progress-row">
+        <span id="time-cur">0:00</span>
+        <input id="progress" type="range" min="0" max="1000" value="0">
+        <span id="time-total">0:00</span>
+      </div>
+      <div class="controls">
+        <button id="btn-loop" class="ctl-btn small" title="单曲循环">🔁</button>
+        <button id="btn-prev" class="ctl-btn" title="上一首">⏮</button>
+        <button id="btn-play" class="ctl-btn play" title="播放/暂停">▶</button>
+        <button id="btn-next" class="ctl-btn" title="下一首">⏭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 迷你控制条：返回列表后仍可操作 -->
+  <div id="nowbar" class="nowbar hidden">
+    <button id="nb-expand" class="round-btn" title="展开播放页">♫</button>
+    <span id="nb-title" class="nb-title">未在播放</span>
+    <button id="nb-prev" class="ctl-btn nb-ctl" title="上一首">⏮</button>
+    <button id="nb-play" class="ctl-btn nb-ctl" title="播放/暂停">▶</button>
+    <button id="nb-next" class="ctl-btn nb-ctl" title="下一首">⏭</button>
+  </div>
+
+  <!-- 网易云面板 -->
+  <div id="netease" class="netease hidden">
+    <div class="net-top">
+      <button id="net-back" class="round-btn" title="返回">←</button>
+      <h2>网易云音乐</h2>
+      <span id="net-user" class="net-user" title="点击退出登录"></span>
+    </div>
+    <div class="net-body">
+      <div id="net-login" class="net-login" hidden>
+        <h3>扫码登录</h3>
+        <div id="net-qr" class="net-qr"></div>
+        <p id="net-qr-tip" class="net-tip">正在生成二维码…</p>
+      </div>
+      <p id="net-err" class="net-err" hidden></p>
+      <div id="net-content" hidden>
+        <div class="net-section">
+          <h3>每日推荐 <button class="mini-btn" id="net-daily-reload">刷新</button></h3>
+          <ul id="net-daily" class="net-songs"></ul>
+        </div>
+        <div class="net-section">
+          <h3>推荐歌单</h3>
+          <div id="net-playlists" class="net-pls"></div>
+        </div>
+        <div class="net-section" id="net-pl-view" hidden>
+          <h3><button class="mini-btn" id="net-pl-back">← 返回</button> <span id="net-pl-name"></span></h3>
+          <ul id="net-pl-songs" class="net-songs"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-root"></div>
+  <audio id="audio"></audio>
+  <script src="/static/js/main.js?v=20261101f"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+Flask>=3.0
+requests>=2.31
+mutagen>=1.47
+pycryptodome>=3.20
+qrcode>=7.4

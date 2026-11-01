@@ -1,0 +1,28 @@
+# systemd 服务单元模板（Linux 服务器部署用）
+# 使用方法：
+#   1. 把本项目放到服务器，例如 /opt/MusicPlayer（下面对应 REPLACE_WITH_PROJECT_DIR）
+#   2. 修改下面的 User / WorkingDirectory / ExecStart 三处
+#   3. cp music.service /etc/systemd/system/ && systemctl daemon-reload
+#      systemctl enable --now music.service
+# 如需自定义音乐目录，在 [Service] 里加一行：
+#   Environment=MUSIC_DIR=/mnt/music
+
+[Unit]
+Description=MusicPlayer - self-hosted music library
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_LINUX_USER
+WorkingDirectory=REPLACE_WITH_PROJECT_DIR
+ExecStart=REPLACE_WITH_PROJECT_DIR/venv/bin/python app.py
+Restart=on-failure
+RestartSec=3
+
+# 可选：指定音乐目录（默认项目根下的 music/）
+# Environment=MUSIC_DIR=/mnt/music
+# 可选：受保护的挂载点（逗号分隔，永不出现在可挂载列表）
+# Environment=USB_PROTECTED_MOUNTS=/mnt/usb
+
+[Install]
+WantedBy=multi-user.target
