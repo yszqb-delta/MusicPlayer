@@ -717,10 +717,22 @@ def api_net_logout():
     return jsonify({"ok": True})
 
 
+@app.post("/api/netease/cookie-login")
+def api_net_cookie_login():
+    """扫码的保底方案：粘贴浏览器里 music.163.com 的 Cookie 登录。"""
+    data = request.get_json(silent=True) or {}
+    try:
+        out = netease.cookie_login(data.get("cookie", ""))
+        return jsonify({"ok": True, "nickname": out["nickname"]})
+    except netease.NetError as e:
+        return jsonify({"error": str(e)}), 502
+
+
 @app.get("/api/netease/daily")
 def api_net_daily():
+    fresh = request.args.get("fresh") == "1"   # 「重新加载」按钮绕过当日缓存
     try:
-        return jsonify({"songs": netease.daily_songs()})
+        return jsonify({"songs": netease.daily_songs(fresh=fresh)})
     except netease.NetError as e:
         return jsonify({"error": str(e)}), 502
 
@@ -783,6 +795,11 @@ def _download_one(song_id: int) -> dict:
         if not info["url"]:
             return {"id": song_id, "song": f"{artist} - {name}",
                     "action": "skipped", "reason": "拿不到下载地址（VIP/无版权）"}
+        if info.get("trial"):
+            # 30 秒试听片段没有收藏价值，不落库，保持曲库干净
+            return {"id": song_id, "song": f"{artist} - {name}",
+                    "action": "skipped",
+                    "reason": "VIP 歌曲当前账号只有 30 秒试听，已跳过下载"}
         ext = "." + (info["type"] or "mp3").lower()
         target = os.path.join(MUSIC_MOUNT, stem + ext)
         if os.path.isfile(target):

@@ -1,17 +1,30 @@
-venv/
+# 运行时生成的数据与用户数据，不要提交
+music_meta.json
+settings.json
+netease_session.json
+login_debug.json
+ai_config.json
+lrc_backup/
+covers/
+static/covers/
+static/bg/
+static/img/bg/
 music/
+
+# 音频文件（版权内容，不要提交）
 *.mp3
 *.flac
 *.m4a
 *.wav
 *.ape
 *.ogg
-music_meta.json
-settings.json
-netease_session.json
-ai_config.json
-lrc_backup/
-covers/
-static/img/bg/
+
+# Python
 __pycache__/
 *.pyc
+venv/
+.venv/
+
+# 系统文件
+.DS_Store
+Thumbs.db

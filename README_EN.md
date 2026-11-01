@@ -144,6 +144,10 @@ Without this file everything else works fine — manual lyrics entry and speech 
 
 Open the "NetEase" button in the top bar → scan the QR code with the NetEase Cloud Music app. Credentials are stored in `netease_session.json` in the project root (auto-generated; don't commit or share it). Daily recommendations require login; online playback and downloads only use content your account is entitled to play.
 
+**If QR login fails**: NetEase applies anti-bot risk control to third-party logins. Repeated scanning in a short window may only yield an *anonymous* credential on the server (you appear "logged in" but daily recommendations are generic). In that case use the "**Cookie login**" button below the QR code: in a browser already signed in to [music.163.com](https://music.163.com), press F12 → Network → pick any request to music.163.com → copy the whole `Cookie` request header → paste it in. This path bypasses QR scanning and is the most reliable.
+
+The login flow (device fingerprint, `type=3` QR channel, `MUSIC_A` anonymous-token registration) mirrors the open-source NeteaseCloudMusicApi project. `deviceid.txt` is the device-ID pool used for login (public data; if missing, a random ID is used and anonymous registration may fail).
+
 > ⚠️ The NetEase integration is for personal, LAN-only listening of content your own account can play. Do not use it for public or commercial services; respect NetEase Cloud Music's terms of service.
 
 ### Chinese display font (optional)
@@ -161,7 +165,8 @@ MusicPlayer/
 ├── lyr.py              # lyrics.net.cn lookup (curl subprocess)
 ├── aifix.py            # AI lyric alignment & proofreading (OpenAI-compatible)
 ├── covers.py           # Embedded cover extraction (mutagen)
-├── netease.py          # NetEase API (weapi crypto / QR login / song URLs)
+├── netease.py          # NetEase API (weapi crypto / QR + cookie login / song URLs)
+├── deviceid.txt        # Device-ID pool for NetEase login (public data)
 ├── usbops.py           # USB mount/eject (Linux only)
 ├── templates/          # Pages (home / upload / lyrics workshop)
 ├── static/             # CSS, JS, default backgrounds, open-source font

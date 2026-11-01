@@ -138,7 +138,7 @@ function renderList() {
 
     li.innerHTML = `
       <span class="idx">${i + 1}</span>
-      ${s.cover ? `<img class="cover-thumb" src="${esc(s.cover)}" alt="">` : `<span class="cover-thumb"></span>`}
+      ${s.cover ? `<img class="cover-thumb" src="${esc(s.cover)}" alt="" loading="lazy" decoding="async">` : `<span class="cover-thumb"></span>`}
       <div class="song-info">
         <div class="song-name">${esc(songTitle(s))}</div>
         <div class="song-sub">${esc(s.filename)}</div>
@@ -641,11 +641,44 @@ const Netease = {
     }, 2000);
   },
 
-  async loadDaily() {
+  cookieLogin() {
+    Modal.open(`
+      <h3>Cookie 登录</h3>
+      <p class="modal-hint">在<b>已登录 music.163.com</b> 的电脑浏览器里按 F12 → Network（网络）→
+      随便点一个发往 music.163.com 的请求 → 复制请求头里 Cookie 后面的整串内容，粘贴到下面：</p>
+      <textarea id="net-ck-input" rows="5" placeholder="MUSIC_U=xxx; __csrf=xxx; NMTID=xxx; ..."></textarea>
+      <div class="modal-actions">
+        <button class="mini-btn" data-act="cancel">取消</button>
+        <button class="mini-btn primary" data-act="ok">登录</button>
+      </div>`, (box) => {
+      const ta = box.querySelector("#net-ck-input");
+      ta.focus();
+      box.querySelector('[data-act="cancel"]').onclick = () => Modal.close();
+      box.querySelector('[data-act="ok"]').onclick = async () => {
+        const ck = ta.value.trim();
+        if (!ck) { ta.placeholder = "请粘贴 Cookie 内容"; return; }
+        try {
+          const r = await api("/api/netease/cookie-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cookie: ck }),
+          });
+          Modal.close();
+          $("#net-user").textContent = "👤 " + (r.nickname || "已登录");
+          this.refreshStatus();
+        } catch (e) {
+          ta.value = "";
+          ta.placeholder = "登录失败：" + e.message;
+        }
+      };
+    });
+  },
+
+  async loadDaily(fresh) {
     const ul = $("#net-daily");
     ul.innerHTML = `<li class="net-loading">加载中…</li>`;
     try {
-      const d = await api("/api/netease/daily");
+      const d = await api("/api/netease/daily" + (fresh ? "?fresh=1" : ""));
       this.currentSongs = d.songs;
       this.renderSongs(ul, d.songs);
     } catch (e) {
@@ -709,7 +742,7 @@ const Netease = {
              onerror="this.style.visibility='hidden'">
         <div class="net-info">
           <div class="net-name">${esc(s.name)}</div>
-          <div class="net-artist">${esc(s.artist)}${s.fee === 1 ? " · VIP" : ""}</div>
+          <div class="net-artist">${esc(s.artist)}${s.fee === 1 ? " · VIP试听" : ""}</div>
         </div>
         <span class="net-dur">${fmtTime((s.duration || 0) / 1000)}</span>
         <button class="mini-btn" data-np="${i}" title="播放">▶</button>
@@ -1053,7 +1086,7 @@ const player = {
     this.audio.src = `/api/netease/stream/${s.id}`;
     this.audio.play().catch(() => {});
     setPlayerTitle(`${s.name} - ${s.artist}`);
-    $("#pl-rating").textContent = "网易云在线";
+    $("#pl-rating").textContent = "网易云在线" + (s.fee === 1 ? " · VIP歌·30秒试听" : "");
     const img = $("#disc-img"), fallback = $("#disc-fallback");
     if (s.pic) {
       img.src = s.pic; img.classList.remove("hidden"); fallback.classList.add("hidden");
@@ -1202,7 +1235,8 @@ function initPlayerUI() {
     try { await api("/api/netease/logout", { method: "POST" }); } catch { /* 忽略 */ }
     Netease.refreshStatus();
   };
-  $("#net-daily-reload").onclick = () => Netease.loadDaily();
+  $("#net-daily-reload").onclick = () => Netease.loadDaily(true);
+  $("#net-cookie-login").onclick = () => Netease.cookieLogin();
   $("#net-pl-back").onclick = () => { $("#net-pl-view").hidden = true; };
 
   // 排序：记忆上次选择

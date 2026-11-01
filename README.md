@@ -144,6 +144,10 @@ cp ai_config.example.json ai_config.json
 
 打开主页右上角「网易云」→ 用网易云音乐 APP 扫码登录。登录凭证保存在项目根的 `netease_session.json`（自动生成，注意不要提交或分享）。每日推荐需要登录后才有；在线播放和下载使用你账号本身有权播放的内容。
 
+**扫码不行怎么办**：网易云对第三方登录有风控，短时间内反复扫码可能只下发给服务器一个「匿名凭证」（表现为能登录但每日推荐是与你无关的泛推荐）。此时点二维码下方的「**Cookie 登录**」，在已登录 [music.163.com](https://music.163.com) 的电脑浏览器里按 F12 → Network（网络）→ 任选一个发往 music.163.com 的请求 → 复制请求头中 Cookie 的整串内容粘贴进去即可，这条路不经过扫码、最稳。
+
+登录链路（设备指纹、`type=3` 扫码通道、`MUSIC_A` 匿名 token 注册）对齐开源项目 NeteaseCloudMusicApi；`deviceid.txt` 是登录用的设备 ID 池（公开数据，缺失时会用随机 ID 但匿名注册可能失败）。
+
 > ⚠️ 网易云集成仅供个人在局域网内收听自己账号有权限的内容，请勿用于公开服务或商业用途，请遵守网易云音乐的用户协议。
 
 ### 中文字体（可选）
@@ -161,7 +165,8 @@ MusicPlayer/
 ├── lyr.py              # lyrics.net.cn 找词（curl 子进程）
 ├── aifix.py            # AI 歌词对齐校对（OpenAI 兼容接口）
 ├── covers.py           # 内嵌封面提取 (mutagen)
-├── netease.py          # 网易云接口封装（weapi 加密 / 扫码登录 / 曲目 URL）
+├── netease.py          # 网易云接口封装（weapi 加密 / 扫码+Cookie 登录 / 曲目 URL）
+├── deviceid.txt        # 网易云登录用的设备 ID 池（公开数据）
 ├── usbops.py           # 优盘挂载/弹出（仅 Linux）
 ├── templates/          # 页面模板（主页 / 上传页 / 歌词工坊）
 ├── static/             # 样式、脚本、默认背景、开源字体

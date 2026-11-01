@@ -438,11 +438,16 @@ textarea.lrc-input:focus { border-color: var(--accent); }
 /* ==================== 网易云面板 ==================== */
 .netease {
   position: fixed; inset: 0; z-index: 60;
-  background: rgba(4,5,10,.92);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: rgba(4,5,10,.45);
   display: flex; flex-direction: column;
   animation: netfade .2s ease;
+}
+/* 面板背景与主页同源（--home-bg-image），同样压暗保证列表可读 */
+.netease::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background-image: var(--home-bg-image, none);
+  background-size: cover; background-position: center;
+  filter: brightness(.38) saturate(.85);
 }
 @keyframes netfade { from { opacity: 0 } to { opacity: 1 } }
 .net-top {
