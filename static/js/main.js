@@ -516,13 +516,13 @@ const LyricHub = {
     const el = $("#lyric-hub");
     if (!el) return;
     el.classList.remove("hidden");
-    document.body.classList.add("netease-open");
+    document.body.classList.add("overlay-open");
     this.load();
   },
 
   close() {
     $("#lyric-hub").classList.add("hidden");
-    document.body.classList.remove("netease-open");
+    document.body.classList.remove("overlay-open");
   },
 
   refreshIfOpen() {
@@ -789,257 +789,6 @@ setInterval(() => {
   Promise.resolve(refreshUsbPanel(area)).finally(() => { usbRefreshing = false; });
 }, 20000);
 
-/* ==================== 网易云面板 ==================== */
-const Netease = {
-  qrTimer: null,
-  dlTimer: null,
-
-  async open() {
-    $("#netease").classList.remove("hidden");
-    document.body.classList.add("netease-open");
-    await this.refreshStatus();
-  },
-
-  close() {
-    $("#netease").classList.add("hidden");
-    document.body.classList.remove("netease-open");
-    clearInterval(this.qrTimer);
-    this.qrTimer = null;
-  },
-
-  async refreshStatus() {
-    let st;
-    try {
-      st = await api("/api/netease/status");
-    } catch (e) {
-      this.showError(e.message);
-      return;
-    }
-    $("#net-err").hidden = true;
-    if (st.logged) {
-      $("#net-user").textContent = "👤 " + (st.nickname || "已登录");
-      $("#net-login").hidden = true;
-      $("#net-content").hidden = false;
-      clearInterval(this.qrTimer);
-      this.loadDaily().then(() => this.scrollToPlaying()).catch(() => {});
-      this.loadPlaylists();
-    } else {
-      $("#net-user").textContent = "";
-      $("#net-content").hidden = true;
-      $("#net-login").hidden = false;
-      this.showQr();
-    }
-  },
-
-  async showQr() {
-    clearInterval(this.qrTimer);
-    const tip = $("#net-qr-tip");
-    tip.textContent = "正在生成二维码…";
-    let data;
-    try {
-      data = await api("/api/netease/qr");
-    } catch (e) {
-      tip.textContent = "二维码生成失败：" + e.message;
-      return;
-    }
-    $("#net-qr").innerHTML = data.svg;
-    tip.textContent = "请用网易云音乐 APP 扫码登录";
-    this.qrTimer = setInterval(async () => {
-      let r;
-      try { r = await api(`/api/netease/qrcheck?key=${encodeURIComponent(data.key)}`); }
-      catch (e) {
-        tip.textContent = "登录校验异常：" + e.message + "（将持续重试）";
-        return;
-      }
-      if (r.code === 802) tip.textContent = "已扫码，请在手机上确认";
-      if (r.code === 800) { clearInterval(this.qrTimer); this.showQr(); }   // 过期自动重生成
-      if (r.code === 803) {
-        clearInterval(this.qrTimer);
-        tip.textContent = "登录成功";
-        this.refreshStatus();
-      }
-    }, 2000);
-  },
-
-  cookieLogin() {
-    Modal.open(`
-      <h3>Cookie 登录</h3>
-      <p class="modal-hint">在<b>已登录 music.163.com</b> 的电脑浏览器里按 F12 → Network（网络）→
-      随便点一个发往 music.163.com 的请求 → 复制请求头里 Cookie 后面的整串内容，粘贴到下面：</p>
-      <textarea id="net-ck-input" rows="5" placeholder="MUSIC_U=xxx; __csrf=xxx; NMTID=xxx; ..."></textarea>
-      <div class="modal-actions">
-        <button class="mini-btn" data-act="cancel">取消</button>
-        <button class="mini-btn primary" data-act="ok">登录</button>
-      </div>`, (box) => {
-      const ta = box.querySelector("#net-ck-input");
-      ta.focus();
-      box.querySelector('[data-act="cancel"]').onclick = () => Modal.close();
-      box.querySelector('[data-act="ok"]').onclick = async () => {
-        const ck = ta.value.trim();
-        if (!ck) { ta.placeholder = "请粘贴 Cookie 内容"; return; }
-        try {
-          const r = await api("/api/netease/cookie-login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ cookie: ck }),
-          });
-          Modal.close();
-          $("#net-user").textContent = "👤 " + (r.nickname || "已登录");
-          this.refreshStatus();
-        } catch (e) {
-          ta.value = "";
-          ta.placeholder = "登录失败：" + e.message;
-        }
-      };
-    });
-  },
-
-  async loadDaily(fresh) {
-    const ul = $("#net-daily");
-    ul.innerHTML = `<li class="net-loading">加载中…</li>`;
-    try {
-      const d = await api("/api/netease/daily" + (fresh ? "?fresh=1" : ""));
-      this.currentSongs = d.songs;
-      this.renderSongs(ul, d.songs);
-    } catch (e) {
-      ul.innerHTML = `<li class="net-loading">${esc(e.message)}</li>`;
-    }
-  },
-
-  async loadPlaylists() {
-    const box = $("#net-playlists");
-    box.innerHTML = "";
-    try {
-      const d = await api("/api/netease/playlists");
-      d.playlists.forEach((p) => {
-        const card = document.createElement("div");
-        card.className = "net-pl";
-        card.innerHTML = `
-          <img src="${esc(p.pic)}" alt="" loading="lazy"
-               onerror="this.style.visibility='hidden'">
-          <div class="net-pl-name">${esc(p.name)}</div>`;
-        card.onclick = () => this.openPlaylist(p);
-        box.appendChild(card);
-      });
-    } catch (e) {
-      box.innerHTML = `<p class="net-loading">${esc(e.message)}</p>`;
-    }
-  },
-
-  async openPlaylist(p) {
-    $("#net-pl-view").hidden = false;
-    $("#net-pl-name").textContent = p.name;
-    const ul = $("#net-pl-songs");
-    ul.innerHTML = `<li class="net-loading">加载中…</li>`;
-    $("#net-pl-view").scrollIntoView({ behavior: "smooth" });
-    try {
-      const d = await api(`/api/netease/playlist/${p.id}`);
-      this.currentSongs = d.songs;
-      this.renderSongs(ul, d.songs);
-    } catch (e) {
-      ul.innerHTML = `<li class="net-loading">${esc(e.message)}</li>`;
-    }
-  },
-
-  renderSongs(ul, songs) {
-    ul.innerHTML = "";
-    if (!songs.length) {
-      ul.innerHTML = `<li class="net-loading">这里没有歌曲</li>`;
-      return;
-    }
-    const cur = player.current;
-    const curId = cur && cur.netease ? String(cur.netId) : null;
-    songs.forEach((s, i) => {
-      const playing = curId !== null && String(s.id) === curId;
-      const li = document.createElement("li");
-      li.className = "net-song" + (playing ? " playing" : "");
-      li.dataset.id = s.id;
-      li.dataset.rank = i + 1;
-      li.innerHTML = `
-        <span class="net-idx">${playing
-          ? `<span class="net-eq"><i></i><i></i><i></i></span>` : i + 1}</span>
-        <img class="net-cover" src="${esc(s.pic || "")}" alt="" loading="lazy"
-             onerror="this.style.visibility='hidden'">
-        <div class="net-info">
-          <div class="net-name">${esc(s.name)}</div>
-          <div class="net-artist">${esc(s.artist)}${s.fee === 1 ? " · VIP试听" : ""}</div>
-        </div>
-        <span class="net-dur">${fmtTime((s.duration || 0) / 1000)}</span>
-        <button class="mini-btn" data-np="${i}" title="播放">▶</button>
-        <button class="mini-btn" data-nd="${i}" title="下载到歌曲列表">⬇</button>`;
-      li.querySelector("[data-np]").onclick = () => {
-        this.play(songs, i);
-      };
-      li.querySelector("[data-nd]").onclick = (e) => this.download([s], e.target);
-      ul.appendChild(li);
-    });
-  },
-
-  /* 面板开着时歌曲切换（自动切歌/上下首），只更新高亮不重建列表 */
-  markPlaying() {
-    const cur = player.current;
-    const id = cur && cur.netease ? String(cur.netId) : null;
-    document.querySelectorAll("#netease .net-song").forEach((li) => {
-      const on = id !== null && li.dataset.id === id;
-      li.classList.toggle("playing", on);
-      const idx = li.querySelector(".net-idx");
-      if (!idx) return;
-      if (on && !idx.querySelector(".net-eq")) {
-        idx.innerHTML = `<span class="net-eq"><i></i><i></i><i></i></span>`;
-      } else if (!on && idx.querySelector(".net-eq")) {
-        idx.textContent = li.dataset.rank;
-      }
-    });
-  },
-
-  /* 打开面板后把正在播放的歌滚进可视区 */
-  scrollToPlaying() {
-    const el = document.querySelector("#netease .net-song.playing");
-    if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  },
-
-  play(songs, i) {
-    player.playNeteaseList(songs, i);
-    this.close();
-  },
-
-  async download(songs, btn) {
-    if (btn) { btn.disabled = true; btn.textContent = "…"; }
-    let r;
-    try {
-      r = await api("/api/netease/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: songs.map((s) => s.id) }),
-      });
-    } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = "⬇"; }
-      alert(e.message);
-      return;
-    }
-    if (btn) btn.textContent = "↓";
-    const timer = setInterval(async () => {
-      let st;
-      try { st = await api("/api/netease/dlstatus"); } catch { return; }
-      if (st.running) return;
-      clearInterval(timer);
-      if (btn) { btn.disabled = false; btn.textContent = "⬇"; }
-      const lines = (st.results || []).map((x) => {
-        if (x.action === "updated") return `✓ ${x.song}（${(x.saved || []).join("、")}）`;
-        if (x.action === "skipped") return `– ${x.song || x.id}：${x.reason}`;
-        return `✗ ${x.song || x.id}：${x.reason}`;
-      });
-      alert(`下载完成（${st.done}/${st.total}）\n\n${lines.join("\n")}\n\n回到主页点「刷新」即可看到新歌。`);
-      loadSongs();
-    }, 1500);
-  },
-
-  showError(msg) {
-    const el = $("#net-err");
-    el.textContent = msg;
-    el.hidden = false;
-  },
-};
 
 /* ==================== 背景设置 ==================== */
 
@@ -1128,7 +877,7 @@ const Lyrics = {
 
   parse(lrcText) {
     if (typeof lrcText !== "string") return [];
-    // 网易云 JSON 歌词（整体数组 / 每行一个对象）转成标准 LRC 行；
+    // 兼容 JSON 歌词（整体数组 / 每行一个对象）转成标准 LRC 行；
     // 注意同一文件可能是混合的：前半是 JSONL credits，后半是标准 [mm:ss.xx] 歌词，
     // 所以必须逐行判断，不能整文件二选一（否则后半段会被整段丢掉）。
     const chunks = [];
@@ -1182,17 +931,6 @@ const Lyrics = {
     try {
       const data = await api(`/api/lyrics/${encodeURIComponent(sid)}`);
       this.lines = data.lyrics ? this.parse(data.lyrics) : [];
-    } catch { this.lines = []; }
-    this.render();
-  },
-
-  /* 网易云在线歌曲：歌词直接按歌曲 id 拉取 */
-  async loadNet(songId) {
-    this.reset();
-    try {
-      const r = await fetch(`/api/netease/lyric/${songId}`);
-      const text = await r.text();
-      this.lines = text.trim() ? this.parse(text) : [];
     } catch { this.lines = []; }
     this.render();
   },
@@ -1275,7 +1013,6 @@ const player = {
   },
 
   load(song) {
-    this.origin = null;               // 本地歌曲：退出播放页回主界面
     this.current = song;
     this.audio.src = `/media/${song.path.split("/").map(encodeURIComponent).join("/")}`;
     this.audio.play().catch(() => {});
@@ -1296,56 +1033,12 @@ const player = {
     NowBar.sync();
   },
 
-  /* 网易云在线播放：流地址由后端 302 实时下发，UI 复用现有播放页 */
-  playNeteaseList(list, index) {
-    this.origin = "netease";          // 退出播放页时原路返回网易云面板
-    this.netQueue = list;
-    this.netIndex = index;
-    this.loadNetease(list[index]);
-    $("#player").classList.remove("hidden");
-    document.body.classList.add("player-open");
-    if (this.wake) this.wake();
-  },
-
-  loadNetease(s) {
-    this.current = {
-      netease: true, netId: s.id,
-      title: s.name, filename: s.name, artist: s.artist, cover: s.pic,
-    };
-    this.audio.src = `/api/netease/stream/${s.id}`;
-    this.audio.play().catch(() => {});
-    setPlayerTitle(`${s.name} - ${s.artist}`);
-    $("#pl-rating").textContent = "网易云在线" + (s.fee === 1 ? " · VIP歌·30秒试听" : "");
-    const img = $("#disc-img"), fallback = $("#disc-fallback");
-    if (s.pic) {
-      img.src = s.pic; img.classList.remove("hidden"); fallback.classList.add("hidden");
-      img.onerror = () => { img.classList.add("hidden"); fallback.classList.remove("hidden"); };
-    } else {
-      img.classList.add("hidden"); fallback.classList.remove("hidden");
-    }
-    Lyrics.loadNet(s.id);
-    document.querySelectorAll(".song-item").forEach((li) => li.classList.remove("playing"));
-    NowBar.sync();
-    // 网易云面板开着时切歌，同步更新面板内高亮
-    if (typeof Netease !== "undefined" && !$("#netease").classList.contains("hidden")) {
-      Netease.markPlaying();
-    }
-  },
-
   next(opts = {}) {
     // 自动切歌（ended/看门狗）带 1.5s 防抖，避免双路径触发连跳两首；手动点击不受限
     if (opts.auto) {
       const now = Date.now();
       if (now - this._lastAuto < 1500) return;
       this._lastAuto = now;
-    }
-    // 网易云在线队列：独立于本地加权队列
-    if (this.current && this.current.netease) {
-      if (!this.netQueue || !this.netQueue.length) return;
-      if (opts.auto && this.loopOne) { this.loadNetease(this.netQueue[this.netIndex]); return; }
-      this.netIndex = (this.netIndex + 1) % this.netQueue.length;
-      this.loadNetease(this.netQueue[this.netIndex]);
-      return;
     }
     if (!state.songs.length) return;
     // 单曲循环：自动切歌（播完/看门狗）时重播当前曲目；手动 ⏭ 不受影响
@@ -1360,12 +1053,6 @@ const player = {
   },
 
   prev() {
-    if (this.current && this.current.netease) {
-      if (!this.netQueue || !this.netQueue.length) return;
-      this.netIndex = Math.max(0, this.netIndex - 1);
-      this.loadNetease(this.netQueue[this.netIndex]);
-      return;
-    }
     if (!this.queue.length) return;
     this.qIndex = Math.max(0, this.qIndex - 1);
     this.load(state.songs[this.queue[this.qIndex]]);
@@ -1422,10 +1109,6 @@ function initPlayerUI() {
     $("#player").classList.add("hidden");
     document.body.classList.remove("player-open");
     NowBar.sync();
-    // 从网易云面板开始播的歌，退出播放页时原路返回面板（并定位到正在播的歌）
-    if (player.current && player.current.netease && player.origin === "netease") {
-      Netease.open();
-    }
   };
   $("#btn-bg").onclick = openBgSettings;
 
@@ -1459,17 +1142,6 @@ function initPlayerUI() {
 
   $("#hub-close").onclick = () => LyricHub.close();
   $("#hub-batch").onclick = batchLyrfix;
-
-  $("#btn-netease").onclick = () => Netease.open();
-  $("#net-back").onclick = () => Netease.close();
-  $("#net-user").onclick = async () => {
-    if (!confirm("退出网易云登录？")) return;
-    try { await api("/api/netease/logout", { method: "POST" }); } catch { /* 忽略 */ }
-    Netease.refreshStatus();
-  };
-  $("#net-daily-reload").onclick = () => Netease.loadDaily(true);
-  $("#net-cookie-login").onclick = () => Netease.cookieLogin();
-  $("#net-pl-back").onclick = () => { $("#net-pl-view").hidden = true; };
 
   // 排序：记忆上次选择
   const sortSel = $("#sort-select");

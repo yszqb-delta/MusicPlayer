@@ -1,8 +1,6 @@
 # 运行时生成的数据与用户数据，不要提交
 music_meta.json
 settings.json
-netease_session.json
-login_debug.json
 ai_config.json
 lrc_backup/
 asr_cache/

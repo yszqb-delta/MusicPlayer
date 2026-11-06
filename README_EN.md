@@ -20,12 +20,6 @@ A self-hosted music library built with Flask + vanilla HTML/JS — zero build ch
 - 🗂️ **Needs-lyrics list**: an in-app list of tracks still missing lyrics — hit "Edit" to jump straight into the studio, or run a batch over every song the site knows
 - 🧹 **Lyrics housekeeping**: auto-pairs misnamed .lrc files, cleans up orphan/duplicate lyrics (only exact-duplicate content is deleted)
 
-**NetEase Cloud Music integration** (optional)
-- 🔐 Log in by scanning a QR code with the NetEase Cloud Music app (credentials stay on your server)
-- 📅 Daily recommendations and curated playlists
-- ▶️ Online playback reusing the full local player UI (vinyl / lyrics / auto-advance)
-- ⬇️ One-click download into your local library: auto-organizes `Artist - Title.mp3` + matching .lrc + cover art
-
 **Misc**
 - 💾 **USB drive management** (Linux only): mount / safely eject drives, show free space, with protections against touching other mounted disks
 - 🌙 Dark theme, mobile-friendly
@@ -39,7 +33,7 @@ A self-hosted music library built with Flask + vanilla HTML/JS — zero build ch
 | curl | Preinstalled on Windows 10+, macOS and Linux; used to fetch the lyrics website |
 | systemd | Only needed when deploying as a service on Linux servers |
 
-> This repository contains **no keys, passwords, or personal information**. NetEase credentials and AI keys live only in local files on your own machine (see "Privacy & Security").
+> This repository contains **no keys, passwords, or personal information**. AI keys live only in local files on your own machine (see "Privacy & Security").
 
 ## Quick start (run directly on your computer)
 
@@ -148,16 +142,6 @@ Two optional fields:
 
 Without this file everything else works fine — manual editing in the studio and speech recognition are unaffected.
 
-### NetEase Cloud Music
-
-Open the "NetEase" button in the top bar → scan the QR code with the NetEase Cloud Music app. Credentials are stored in `netease_session.json` in the project root (auto-generated; don't commit or share it). Daily recommendations require login; online playback and downloads only use content your account is entitled to play.
-
-**If QR login fails**: NetEase applies anti-bot risk control to third-party logins. Repeated scanning in a short window may only yield an *anonymous* credential on the server (you appear "logged in" but daily recommendations are generic). In that case use the "**Cookie login**" button below the QR code: in a browser already signed in to [music.163.com](https://music.163.com), press F12 → Network → pick any request to music.163.com → copy the whole `Cookie` request header → paste it in. This path bypasses QR scanning and is the most reliable.
-
-The login flow (device fingerprint, `type=3` QR channel, `MUSIC_A` anonymous-token registration) mirrors the open-source NeteaseCloudMusicApi project. `deviceid.txt` is the device-ID pool used for login (public data; if missing, a random ID is used and anonymous registration may fail).
-
-> ⚠️ The NetEase integration is for personal, LAN-only listening of content your own account can play. Do not use it for public or commercial services; respect NetEase Cloud Music's terms of service.
-
 ### Chinese display font (optional)
 
 The player page title uses two typefaces: English titles use Great Vibes (SIL OFL 1.1, included in `static/fonts/`); the Chinese title font is a commercially licensed typeface and is **not distributed with this project**. If you want the same look, obtain a licensed copy yourself and place it at `static/fonts/chuangcuhei.ttf`. When missing, the browser falls back to system fonts and nothing breaks.
@@ -173,8 +157,6 @@ MusicPlayer/
 ├── lyr.py              # lyrics.net.cn lookup (curl subprocess)
 ├── aifix.py            # AI lyric alignment & proofreading (OpenAI-compatible)
 ├── covers.py           # Embedded cover extraction (mutagen)
-├── netease.py          # NetEase API (weapi crypto / QR + cookie login / song URLs)
-├── deviceid.txt        # Device-ID pool for NetEase login (public data)
 ├── usbops.py           # USB mount/eject (Linux only)
 ├── templates/          # Pages (home / upload / lyrics workshop)
 ├── static/             # CSS, JS, default backgrounds, open-source font
@@ -185,12 +167,11 @@ MusicPlayer/
 ## Privacy & Security
 
 - The repo contains **no** API keys, passwords, personal info, or music files
-- `netease_session.json` (your NetEase credentials) and `ai_config.json` (your AI key) are excluded via [.gitignore](.gitignore) and will never be committed
+- `ai_config.json` (your AI key) is excluded via [.gitignore](.gitignore) and will never be committed
 - The app has no built-in authentication: use it only on a LAN you trust. To expose it publicly, put an authenticating reverse proxy in front (Nginx + Basic Auth, OAuth2 Proxy, etc.)
 
 ## Acknowledgements
 
-- [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) — reference for NetEase weapi crypto and QR login
 - Bcut (bi-jian) ASR endpoint — lyrics speech recognition
 - [lyrics.net.cn](https://lyrics.net.cn/) — lyrics source
 - [Great Vibes](https://fonts.google.com/specimen/Great+Vibes) — SIL OFL 1.1 font

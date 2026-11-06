@@ -20,12 +20,6 @@
 - 🗂️ **缺词清单**：站内列出还没有歌词的歌，点「编辑」直接进工坊；也支持「一键补词」批量跑网站有词的歌
 - 🧹 **歌词整理**：自动配对命名错位的 .lrc、清理孤儿/重复歌词（内容相同才删）
 
-**网易云音乐集成**（可选）
-- 🔐 扫码登录你的网易云账号（凭证只存在服务器本地）
-- 📅 每日推荐、推荐歌单浏览
-- ▶️ 在线播放：复用本地播放页的全部 UI（唱片 / 歌词 / 自动切歌）
-- ⬇️ 一键下载到本地曲库：自动整理 `歌手 - 歌名.mp3` + 同名歌词 + 封面三件套
-
 **其他**
 - 💾 **优盘管理**（仅 Linux）：挂载 / 安全弹出优盘、显示剩余容量，带保护机制防止误动其他盘
 - 🌙 深色主题、手机端适配
@@ -39,7 +33,7 @@
 | curl | 系统自带（Windows 10+、macOS、Linux 均有），歌词网站抓取用 |
 | systemd | 仅 Linux 服务器部署为服务时需要，桌面运行不需要 |
 
-> 本项目**不含任何密钥、密码或个人信息**。网易云登录凭证与 AI 密钥都只保存在你自己机器上的本地文件里（见下方「隐私与安全」）。
+> 本项目**不含任何密钥、密码或个人信息**。AI 密钥只保存在你自己机器上的本地文件里（见下方「隐私与安全」）。
 
 ## 快速开始（直接在电脑上运行）
 
@@ -148,16 +142,6 @@ cp ai_config.example.json ai_config.json
 
 不配置此文件时，其余功能完全不受影响；歌词工坊里的手动编辑、语音识别照常可用。
 
-### 网易云音乐
-
-打开主页右上角「网易云」→ 用网易云音乐 APP 扫码登录。登录凭证保存在项目根的 `netease_session.json`（自动生成，注意不要提交或分享）。每日推荐需要登录后才有；在线播放和下载使用你账号本身有权播放的内容。
-
-**扫码不行怎么办**：网易云对第三方登录有风控，短时间内反复扫码可能只下发给服务器一个「匿名凭证」（表现为能登录但每日推荐是与你无关的泛推荐）。此时点二维码下方的「**Cookie 登录**」，在已登录 [music.163.com](https://music.163.com) 的电脑浏览器里按 F12 → Network（网络）→ 任选一个发往 music.163.com 的请求 → 复制请求头中 Cookie 的整串内容粘贴进去即可，这条路不经过扫码、最稳。
-
-登录链路（设备指纹、`type=3` 扫码通道、`MUSIC_A` 匿名 token 注册）对齐开源项目 NeteaseCloudMusicApi；`deviceid.txt` 是登录用的设备 ID 池（公开数据，缺失时会用随机 ID 但匿名注册可能失败）。
-
-> ⚠️ 网易云集成仅供个人在局域网内收听自己账号有权限的内容，请勿用于公开服务或商业用途，请遵守网易云音乐的用户协议。
-
 ### 中文字体（可选）
 
 播放页标题使用两套字体：英文用 Great Vibes（SIL OFL 1.1 开源授权，已随项目分发于 `static/fonts/`）；中文标题字体为商业授权字体，**不随本项目分发**。如需同款效果，请自行获取授权字体并命名为 `static/fonts/chuangcuhei.ttf` 放入；缺失时浏览器自动回退系统字体，功能不受影响。
@@ -173,8 +157,6 @@ MusicPlayer/
 ├── lyr.py              # lyrics.net.cn 找词（curl 子进程）
 ├── aifix.py            # AI 歌词对齐校对（OpenAI 兼容接口）
 ├── covers.py           # 内嵌封面提取 (mutagen)
-├── netease.py          # 网易云接口封装（weapi 加密 / 扫码+Cookie 登录 / 曲目 URL）
-├── deviceid.txt        # 网易云登录用的设备 ID 池（公开数据）
 ├── usbops.py           # 优盘挂载/弹出（仅 Linux）
 ├── templates/          # 页面模板（主页 / 上传页）
 ├── static/             # 样式、脚本、默认背景、开源字体
@@ -187,12 +169,11 @@ MusicPlayer/
 ## 隐私与安全
 
 - 仓库内**没有**任何 API 密钥、密码、个人信息或音乐文件
-- `netease_session.json`（你的网易云登录凭证）、`ai_config.json`（你的 AI 密钥）已在 [.gitignore](.gitignore) 中排除，永远不会被提交
+- `ai_config.json`（你的 AI 密钥）已在 [.gitignore](.gitignore) 中排除，永远不会被提交
 - 项目无认证功能：请只在你信任的局域网内使用；如需暴露公网，请自行在前面加一层带认证的反向代理（如 Nginx + Basic Auth、OAuth2 Proxy 等）
 
 ## 致谢
 
-- [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) —— 网易云 weapi 加密与扫码登录的思路参考
 - 必剪（Bcut）ASR 接口 —— 歌词语音识别
 - [lyrics.net.cn](https://lyrics.net.cn/) —— 歌词来源站点
 - [Great Vibes](https://fonts.google.com/specimen/Great+Vibes) —— SIL OFL 1.1 授权字体
